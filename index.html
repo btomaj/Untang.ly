@@ -1,0 +1,151 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
+    "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+<html version="-//W3C//DTD XHTML 1.1//EN"
+      xmlns="http://www.w3.org/1999/xhtml" xml:lang="en"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.w3.org/1999/xhtml
+                          http://www.w3.org/MarkUp/SCHEMA/xhtml11.xsd">
+<head>
+    <title>Untang.ly: flowchart</title>
+    <meta http-equiv="Content-type" content="text/html;charset=UTF-8" />
+    <style type="text/css">
+        *
+        {
+            -moz-user-select: -moz-none;
+            -khtml-user-select: none;
+            -webkit-user-select: none;
+            -o-user-select: none;
+            user-select: none;
+
+        }
+
+        html,
+        body,
+        table,
+        tr,
+        td
+        {
+            margin: 0;
+            padding: 0;
+
+            width: 100%;
+            height: 100%;
+        }
+        td
+        {
+            text-align: center;
+            vertical-align: middle;
+        }
+
+        #admin
+        {
+            position: fixed;
+            bottom: 0;
+
+            width: 100%;
+            height: 89px;
+
+            text-align: center;
+        }
+        * html #admin /* for IE 6: fixed positioning hack (http://subtlegradient.com/articles/2009/07/29/css_position_fixed_for_ie6.html) */
+        {
+            position: absolute;
+            bottom: auto;
+            top: expression(eval(document.documentElement.scrollTop+document.documentElement.clientHeight-this.offsetHeight-(parseInt(this.currentStyle.marginTop,10)||0)-(parseInt(this.currentStyle.marginBottom,10)||0)));
+        }
+        #admin div
+        {
+            margin: auto;
+
+            width: 610px;
+            height: 89px;
+
+            text-align: left;
+
+            /* Dev colours */
+            background: black;
+            color: white;
+        }
+
+        #move
+        {
+            position: absolute;
+
+            display: none;
+
+            border: 2px dashed #2088B2;
+
+            width: 109px;
+            height: 109px;
+
+            z-index: 100;
+        }
+
+        #shape_previews
+        {
+            position: absolute;
+
+            top: 0;
+            left: 0;
+
+            display: none;
+
+            width: 180px;
+            height: 180px;
+
+            background: white;
+
+            overflow: scroll;
+        }
+
+        #menu
+        {
+            position: absolute;
+
+            top: 0;
+            left: 0;
+
+            display: none;
+
+            margin-top: -20px;
+
+            width: 180px;
+            height: 20px;
+            /* Dimensions are set directly in JavaScript for positioning */
+
+            background: url("menu.gif");
+
+            font: 12px/17px Verdana, Arial, sans-serif;
+
+            color: #999;
+
+        }
+        #menu a
+        {
+            color: #CCC;
+
+            text-decoration: none;
+        }
+        #menu a:hover
+        {
+            color: #DDD;
+
+            text-decoration: underline;
+        }
+    </style>
+</head>
+
+<body unselectable="on">
+    <table unselectable="on">
+        <tr unselectable="on">
+            <td id="untangly" unselectable="on">
+                <div id="move" unselectable="on"></div>
+            </td>
+        </tr>
+    </table>
+    
+    <script type="text/javascript" src="raphael.js"></script>
+    <script type="text/javascript" src="jquery-1.6.min.js"></script>
+    <script type="text/javascript" src="untangly.js"></script>
+</body>
+</html>
