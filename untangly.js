@@ -173,16 +173,18 @@
  *
  * @requires Raphael
  * @requires jQuery
+ * @requires ESAPI
  */
 var U = U || {};
 
 
 /**
- * Facade to the SVG/VML library.
+ * Adapter to the SVG/VML library.
  *
  * Current library is Raphaël (http://raphaeljs.com/reference.html).
  *  - Available attributes for Elements includes those specified under each
  *      element type as well as those specified under "attr".
+ *  - <text/> elements are poorly implemented (see documentation).
  *
  * @class Canvas
  * @namespace U
@@ -244,8 +246,13 @@ U.Canvas = (function () {
 
     // Constructor prototype
     /**
-     * Creates "Paths" (http://www.w3.org/TR/SVG/paths.html) and "Basic Shapes"
-     * (http://www.w3.org/TR/SVG/shapes.html).
+     * Creates "Paths" (http://www.w3.org/TR/SVG/paths.html), "Basic Shapes"
+     * (http://www.w3.org/TR/SVG/shapes.html) and "Text" (only <text> supported)
+     * (http://www.w3.org/TR/2003/REC-SVG11-20030114/text.html).
+     *
+     * <text/> elements accept a non-standard "text" key as part of the
+     * "attribute" parameter object, the string value of which becomes the text
+     * content for the element.
      *
      * @method create
      *
@@ -270,7 +277,8 @@ U.Canvas = (function () {
             ry, // for "ellipse" (Raphael doesn't accept ry for "rect")
             cx, // for "circle" and "ellipse"
             cy, // for "circle" and "ellipse"
-            r; // for "circle"
+            r, // for "circle"
+            text; // for "text"
 
         switch (type) {
         case "path":
@@ -316,6 +324,18 @@ U.Canvas = (function () {
             delete attributes.cy;
             delete attributes.rx;
             delete attributes.ry;
+            break;
+
+        case "text":
+            text = attributes.text;
+            x = attributes.x || 0;
+            y = attributes.y || 0;
+            // TODO sanitize text
+            element = this.r.text(x, y, text);
+            delete attributes.text;
+            delete attributes.x;
+            delete attributes.y;
+            element.attr(attributes);
             break;
         }
 
@@ -472,6 +492,213 @@ U.Canvas = (function () {
 
 
 /**
+ * Handles the functionality of the UI elements above the canvas.
+ *
+ * Features:
+ *  - Enables a layered UI with UI elements as masters and slaves of other
+ *      UI elements.
+ *  - <esc> steps back a layer in active UI elements.
+ *  - Clicking anywhere on the page (except on UI element(s) registered through
+ *      this class) will reset the UI and remove any active UI elements shown
+ *      through this class.
+ *
+ * @class state
+ * @namespace U
+ *
+ * @static
+ */
+U.state = (function () {
+
+    // Dependencies
+    var //jQuery = jQuery || {},
+
+
+    // Private properties
+        /**
+         * Holds all the receiver objects for the registered UI elements.
+         *
+         * @property element
+         * @type object
+         */
+        element = {},
+
+        /**
+         * Holds an entry for each active UI element. Each entry is the master
+         * of the subsequent entry and the slave of the preceding entry, forming
+         * a master-slave relationship integral to the functionality of the UI.
+         *
+         * @property active
+         * @type array
+         */
+        active = [],
+
+        /**
+         * Holds a reference to the BODY element which is to be used to supress
+         * the default click behaviour that resets the UI.
+         *
+         * @property body
+         * @type array
+         */
+        body = $("body"),
+
+
+    // Private methods
+        /**
+         * Registers a new UI element and its receiver that will be used to
+         * control the UI element. The receiver implements the following
+         * interface:
+         *  property DOM;
+         *  function show(options);
+         *  function hide();
+         *
+         * @method add
+         *
+         * @param {string} name The name of the UI element. Will be used
+         *      internally and by clients to control the UI element.
+         * @param {object} receiver The receiver for the UI element that is
+         *      registered and that implements the above interface.
+         */
+        add = function add(name, receiver) {
+
+            element[name] = receiver;
+
+            receiver.DOM.click(function (e) {
+
+                e.stopPropagation();
+
+                // Click supression must be removed from BODY element manually when supressed here
+                body.unbind();
+
+            });
+
+        },
+
+        /**
+         * Instructs the receiver to hide the indicated UI element and any slave
+         * UI elements. If no parameter is passed all UI elements are hidden and
+         * the UI is reset.
+         *
+         * @method deactivate
+         *
+         * @param {string} name [Optional] The name of the UI element (as
+         *      registered with the "add" method) to hide.
+         */
+        deactivate = function deactivate(name) {
+
+            var i,
+                position;
+
+            if (name) {
+                // Find the UI element's position in the "active" array
+                for (i = active.length; i--;) {
+                    if (active[i] === name) {
+                        position = i;
+                        i = 0; // end loop
+                    }
+                }
+
+                for (i = active.length - 1; position <= i; i -= 1) {
+                    name = active.pop();
+                    element[name].deactivate();
+                }
+            } else if (active.length) { // no UI elements exist when active.length = 0
+                for (i = active.length; i--;) {
+                    name = active.pop();
+                    element[name].deactivate();
+                }
+            }
+
+        },
+
+        /**
+         * Instructs the receiver to show the indicated UI element.
+         *
+         * A property "master" can be included in the "options" parameter object
+         * which will show the UI element as a slave of the given master. The
+         * property has to be a string identifying a UI element using the name
+         * provided when the UI element was registered through the "add" method.
+         * Slave UI elements are automatically hidden when their masters are
+         * hidden or a new slave is registered to the master (each master can
+         * have at most ONE slave).
+         *
+         * @method activate
+         *
+         * @param {string} name The name of the UI element as registered with
+         *      the "add" method.
+         * @param {object} options [Optional] Any additional values needed to
+         *      show the UI element correctly.
+         */
+        activate = function activate(name, options) {
+
+            var master = options.master,
+                i,
+                sibling;
+
+            if (master) {
+                delete options.master;
+
+                for (i = active.length; i--;) {
+                    if (active[i] === master) {
+                        sibling = i + 1;
+                        i = 0; // end loop
+                    }
+                }
+
+                if (active[sibling] !== undefined) {
+                    deactivate(active[sibling]);
+                }
+
+            } else {
+                deactivate();
+            }
+
+            element[name].activate(options);
+
+            active.push(name);
+
+            // Supress click event attached to document (see Initialisation Proceedures)
+            body.click(function (e) {
+
+                e.stopPropagation();
+
+                body.unbind();
+
+            });
+
+        };
+
+    // End var
+
+
+    // Initialisation proceedures
+    // Step back one UI layer when <esc> is pressed
+    $(document).keyup(function (e) {
+
+        if (active.length && e.keyCode === 27) { // <esc>
+            deactivate(active[active.length - 1]);
+        }
+
+    });
+
+    // Reset UI when the user "clicks off", stop propagation to prevent
+    $("html").click(function () {
+
+        deactivate();
+
+    });
+
+
+    // Public API
+    return {
+        add: add,
+        activate: activate,
+        deactivate: deactivate
+    };
+
+}());
+
+
+/**
  * Creates a category to which shapes can be added.
  *
  * @class Shapes
@@ -486,11 +713,31 @@ U.Canvas = (function () {
 U.Shapes = (function () {
 
     // Dependencies
-    var Canvas = U.Canvas,
+    var //jQuery = jQuery || {},
+        Canvas = U.Canvas,
+        state = U.state,
 
 
     // Private properties
-        groupId = 0,
+        /**
+         * A counter that is used to give each category a unique ID number.
+         *
+         * @property category
+         * @type integer
+         *
+         * @private
+         */
+        category = 0,
+
+        /**
+         * Holds the jQuery array that references the <div> element wherein
+         * previews for all shape categories is contained.
+         *
+         * @property container
+         * @type array
+         *
+         * @private
+         */
         container = $("#shape_previews"),
 
 
@@ -501,22 +748,33 @@ U.Shapes = (function () {
 
 
     // Constructor
-    Shapes = function Shapes(groupName) {
+    Shapes = function Shapes(categoryName) {
 
         var s,
+
+            /**
+             * A counter used to keep track of the number of shapes added and
+             * subsequent previews created. This is used to manage the
+             * positioning of previews and the size of the underlying canvas.
+             *
+             * @property shape
+             * @type integer
+             *
+             * @private
+             */
             shapeNumber = 0;
 
         if (!(this instanceof U.Shapes)) {
-            return new U.Shapes(groupName);
+            return new U.Shapes(categoryName);
         }
 
-        groupId += 1; // this has to be done before the following two
+        category += 1; // this has to be done before the following two
 
         $("<div/>", {
-            id: "shapeset_" + groupId 
+            id: "shapecategory_" + category 
         }).appendTo(container);
 
-        s = new Canvas("shapeset_" + groupId, {
+        s = new Canvas("shapecategory_" + category, {
             width: 165,
             height: 1
         });
@@ -566,6 +824,8 @@ U.Shapes = (function () {
 
             preview.click(function () {
 
+                state.deactivate("shapes");
+
                 Shapes.eventHandler(shape);
 
             });
@@ -580,201 +840,20 @@ U.Shapes = (function () {
     };
 
 
-    // Constructor static methods
+    // Constructor prototype
+
+
+    // Constructor static properties
+
+
+    // Constructor static method(s)
     Shapes.eventHandler = function () {};
 
 
     // Initialisation proceedures
-
-
-    // Public API
-    return Shapes;
-
-}());
-
-
-/**
- * Handles the functionality of the UI elements above the canvas.
- *
- * @class ui
- * @namespace U
- *
- * @static
- */
-U.ui = (function () {
-
-    // Dependencies
-    var
-
-
-    // Private properties
-        /**
-         * Holds all the receiver objects for the registered UI elements.
-         *
-         * @property element
-         * @type object
-         */
-        element = {},
-
-        /**
-         * Holds an entry for each active UI element. Each entry is the master
-         * of the subsequent entry and the slave of the preceding entry, forming
-         * a master-slave relationship integral to the functionality of the UI.
-         *
-         * @property active
-         * @type array
-         */
-        active = [],
-
-        /**
-         * Holds a reference to the HTML element used to supress the default
-         * click behaviour of resetting the UI.
-         *
-         * @property html
-         * @type array
-         *
-         * @private
-         */
-        html = $("html"),
-
-
-    // Private methods
-        /**
-         * Registers a new UI element and its receiver that will be used to
-         * control the UI element. The receiver implements the following
-         * interface:
-         *  property DOM;
-         *  function show(options);
-         *  function hide();
-         *
-         * @method add
-         *
-         * @param {string} name The name of the UI element. Will be used
-         *      internally and by clients to control the UI element.
-         * @param {object} receiver The receiver for the UI element that is
-         *      registered.
-         */
-        add = function add(name, receiver) {
-
-            element[name] = receiver;
-
-            receiver.DOM.click(function (e) {
-
-                e.stopPropagation();
-
-            });
-
-        },
-
-        /**
-         * Instructs the receiver to hide the indicated UI element and any slave
-         * UI elements. If no parameter is passed all UI elements are hidden and
-         * the UI is reset.
-         *
-         * @param {string} name [Optional] The name of the UI element (as
-         *      registered with the "add" method) to hide.
-         */
-        hide = function hide(name) {
-
-            var i,
-                position;
-
-            if (name) {
-                // Find the UI element's position in the "active" array
-                for (i = active.length; i--;) {
-                    if (active[i] === name) {
-                        position = i;
-                        i = 0; // end loop
-                    }
-                }
-
-                for (i = active.length - 1; position <= i; i -= 1) {
-                    name = active.pop();
-                    element[name].hide();
-                }
-            } else if (active.length) { // no UI elements exist when active.length = 0
-                for (i = active.length; i--;) {
-                    name = active.pop();
-                    element[name].hide();
-                }
-            }
-
-        },
-
-        /**
-         * Instructs the receiver to show the indicated UI element.
-         *
-         * For internal use only:
-         * A property "master" can be included in the "options" parameter object
-         * which will show the UI element as a slave of the given master. The
-         * property has to be a string identifying a UI element using the name
-         * provided when the UI element was registered through the "add" method.
-         * Slave UI elements are automatically hidden when their masters are
-         * hidden or a new slave is registered to the master (each master can
-         * have at most ONE slave).
-         *
-         * @param {string} name The name of the UI element as registered with
-         *      the "add" method.
-         * @param {object} options [Optional] Any additional values needed to
-         *      show the UI element correctly.
-         */
-        show = function show(name, options) {
-
-            var master = options.master,
-                i,
-                sibling;
-
-            if (master) {
-                delete options.master;
-
-                for (i = active.length; i--;) {
-                    if (active[i] === master) {
-                        sibling = i + 1;
-                        i = 0; // end loop
-                    }
-                }
-            }
-
-            hide(active[sibling]); // will equate to hide() and reset UI if no master is defined
-
-            element[name].show(options);
-
-            active.push(name);
-
-            // Supress click event attached to document (see Initialisation Proceedures)
-            html.click(function (e) {
-
-                e.stopPropagation();
-
-                html.unbind();
-
-            });
-
-        };
-
-    // End var
-
-
-    // Initialisation proceedures
-    // Step back one UI layer when <esc> is pressed
-    $(document).keyup(function (e) {
-
-        if (active.length && e.keyCode === 27) { // <esc>
-            hide(active[active.length - 1]);
-        }
-
-    });
-
-    // Reset UI when the user "clicks off", stop propagation to prevent
-    $(document).click(function () {
-
-        hide();
-
-    });
-
-    add("shapes", {
+    state.add("shapes", {
         DOM: $("#shape_previews"),
-        show: function show(options) {
+        activate: function activate(options) {
 
             var node = options.node,
                 nodeLocation = $(node.shape.node).offset();
@@ -787,31 +866,16 @@ U.ui = (function () {
             this.DOM.css("display", "block");
 
         },
-        hide: function hide() {
+        deactivate: function deactivate() {
 
             this.DOM.css("display", "none");
 
-        },
-        init: function init() {
-
-            this.DOM.click(function (e) {
-
-                if (e.target.nodeName === "path") {
-                    hide("shapes");
-                }
-
-            });
-
-            return this;
-
         }
-    }.init());
+    });
 
 
     // Public API
-    return {
-        show: show
-    };
+    return Shapes;
 
 }());
 
@@ -826,7 +890,7 @@ U.ui = (function () {
     // Dependencies
     var Canvas = U.Canvas,
         Shapes = U.Shapes,
-        ui = U.ui,
+        state = U.state,
 
 
     // Private properties
@@ -863,7 +927,9 @@ U.ui = (function () {
         node = [],
 
         /**
-         * Holds the values of the bounds of the canvas in grid units.
+         * Holds the values of the bounds of the canvas recorded as units from
+         * the origin, eg. if bound.west is east of the origin it is recorded
+         * as a negative value.
          *
          * @property bound
          * @type object
@@ -897,15 +963,6 @@ U.ui = (function () {
             space: 55
         },
 
-        /**
-         * Used in conjunction with "Shapes" as a store for the groups created
-         * through the constructor.
-         *
-         * @property flowchartShapes
-         * @type object
-         */
-        flowchartShapes = {},
-
 
     // Private methods
         /**
@@ -924,7 +981,7 @@ U.ui = (function () {
                 space = pixel.space;
 
             x = space + object / 2 + // left padding
-                    (Math.abs(bound.west) + x) * (object + space);       
+                    (bound.west + x) * (object + space);       
             y = space + object / 2 + // top padding
                     (bound.north - y) * (object + space);
 
@@ -933,6 +990,7 @@ U.ui = (function () {
         },
 
         /**
+         * Resizes the canvas given the current bounds.
          *
          * @method resizeCanvas
          */
@@ -942,28 +1000,37 @@ U.ui = (function () {
                 space = pixel.space;
 
             c.adjust({
-                width: (Math.abs(bound.west) + bound.east) *
+                width: (bound.west + bound.east) *
                         (object + space) + object + space * 2, // account for space needed by origin node
-                height: (bound.north + Math.abs(bound.south)) *
-                        (object + space) + object + space * 2 + 89 // account for space needed by origin node XXX +89 for admin panel (fix when controlled by "ui")
+                height: (bound.north + bound.south) *
+                        (object + space) + object + space * 2 + 89 // account for space needed by origin node +89px for admin panel
             });
 
         },
 
         /**
+         * Adjusts the value of the given bound by the value indicated.
+         *
+         * When both parameters are omitted all four bounds will be determined
+         * by the active nodes. This is inefficient and sacrifices performance
+         * so should only be used where bounds cannot feasibly be determined in
+         * other ways.
+         *
          * @method adjustBound
          *
-         * @param {string} direction Valid values are "north", "east",
-         *      "south" and "west".
-         * @param {integer} value The value by which the bound should be
-         *      adjusted. Valid range is -0+.
+         * @param {string} direction [Optional] Valid values are "north",
+         *      "east", "south" and "west".
+         * @param {integer} value [Optional] The value by which the bound should
+         *      be adjusted. Valid range is -0+.
          */
         adjustBound = function adjustBound(direction, value) {
 
             var position,
                 i,
                 object,
-                space;
+                space,
+                allX = [],
+                allY = [];
 
             switch (direction) {
             case "north":
@@ -972,7 +1039,7 @@ U.ui = (function () {
                 object = pixel.object;
                 space = pixel.space;
                 for (i = node.length; i--;) {
-                    c.move(node[i].shape, 0, space + object);
+                    c.move(node[i].shape, 0, (space + object) * value);
                 }
                 break;
 
@@ -982,29 +1049,41 @@ U.ui = (function () {
                 break;
 
             case "south":
-                bound.south -= value;
+                bound.south += value;
                 resizeCanvas();
                 break;
 
             case "west":
-                bound.west -= value;
+                bound.west += value;
                 resizeCanvas();
                 object = pixel.object;
                 space = pixel.space;
                 for (i = node.length; i--;) {
-                    c.move(node[i].shape, space + object, 0);
+                    c.move(node[i].shape, (space + object) * value, 0);
                 }
+                break;
+
+            default:
+                for (i = node.length; i--;) {
+                    allX.push(node[i].x);
+                    allY.push(node[i].y);
+                }
+                adjustBound("north", Math.max.apply(Math, allY) - bound.north);
+                adjustBound("east", Math.max.apply(Math, allX) - bound.east);
+                adjustBound("south", -Math.min.apply(Math, allY) - bound.south); // all y below origin are negative
+                adjustBound("west", -Math.min.apply(Math, allX) - bound.west); // all x left of origin are negative
                 break;
             }
 
         },
 
         /**
-         * @method createSingleNode
-         * @for Untangly
+         * Creates a new blank node.
          *
-         * @param {integer} x
-         * @param {integer} y
+         * @method createNode
+         *
+         * @param {integer} x Grid x coordinate of the new node.
+         * @param {integer} y Grid y coordinate of the new node.
          */
         createSingleNode = function (x, y) {
 
@@ -1017,40 +1096,43 @@ U.ui = (function () {
                     newNode = {};
 
                 // If node is beyond current bound, expand bound and resize canvas
-                if (y > 0 && y > bound.north) {
+                if (y > bound.north) {
                     adjustBound("north", 1);
-                } else if (x > 0 && x > bound.east) {
+                } else if (x > bound.east) {
                     adjustBound("east", 1);
-                } else if (y < 0 && y < bound.south) {
+                } else if (y < -bound.south) {
                     adjustBound("south", 1);
-                } else if (x < 0 && x < bound.west) {
+                } else if (x < -bound.west) {
                     adjustBound("west", 1);
                 }
 
-                pixel = locateNode(x, y); // needs to be done after bounds are adjusted
+                pixel = locateNode(x, y); // must be done only after bounds are adjusted
 
                 newNode = {
                     x: x,
                     y: y,
-                    type: "single"
+                    id: node.length,
+                    type: "single",
+                    shape: c.create("circle", {
+                        cx: pixel[0],
+                        cy: pixel[1],
+                        r: 0,
+                        fill: "black",
+                        stroke: "none",
+                        cursor: "pointer"
+                    })
                 };
 
-                newNode.shape = c.create("circle", {
-                    cx: pixel[0],
-                    cy: pixel[1],
-                    r: 0,
-                    fill: "black",
-                    stroke: "none",
-                    cursor: "pointer"
-                });
+                grid[x][y] = newNode;
+                node.push(newNode);
 
                 // Make Single node "pop" onto screen
                 c.animate(newNode.shape, {r: 10.5}, 110).
                         animate(newNode.shape, {r: 6.5}, 140).animate();
 
-                newNode.shape.click(function () {
+                $(newNode.shape.node).click(function () {
 
-                    ui.show("shapes", {
+                    state.activate("shapes", {
                         node: newNode 
                     });
 
@@ -1062,58 +1144,56 @@ U.ui = (function () {
 
                 });
 
-                node.push(newNode);
 
-                newNode.id = (node.length - 1);
-
-                grid[x][y] = newNode;
+                return newNode;
             }
 
         },
 
         /**
-         * @method createEngagedNode
+         * Draws a flowcharting shape for the given node.
          *
-         * @param {integer} x
-         * @param {integer} y
-         * @param {string} pathData
+         * @method engageNode
+         *
+         * @param {integer} x Grid x coordinate of node for which to draw shape.
+         * @param {integer} y Grid y coordiante of node for which to draw shape.
+         * @param {string} pathData SVG Path Data of the shape to draw
+         *      (http://www.w3.org/TR/2003/REC-SVG11-20030114/paths.html#PathData).
          */
         createEngagedNode = function (x, y, pathData) {
 
             var selectedNode = grid[x][y],
+                selectedNodeElement,
+                body = $("body"),
                 pixel = locateNode(x, y);
+
+            selectedNode.shapePath = pathData;
 
             pixel[0] -= 44.5; // x
             pixel[1] -= 44.5; // y
 
             pathData = pathData.split(" ");
-
             pathData[1] = +pathData[1] + pixel[0];
-
             pathData[2] = +pathData[2] + pixel[1];
-
             pathData.join(" ");
 
-            selectedNode.shape.remove();
+            c.remove(selectedNode.shape);
 
             selectedNode.shape = c.create("path", {
                 d: pathData,
                 stroke: "black",
                 "stroke-width": 2,
-                fill: "white"
+                fill: "white",
+                cursor: "pointer"
             });
 
-            selectedNode.shape.click(function () {
+            selectedNodeElement = $(selectedNode.shape.node);
 
-                ui.show("shapes", {
-                    node: selectedNode
+            selectedNodeElement.click(function () {
+
+                state.activate("menu", {
+                    node: grid[x][y]
                 });
-
-                Shapes.eventHandler = function (pathData) {
-
-                    createEngagedNode(x, y, pathData);
-
-                };
 
             });
 
@@ -1124,6 +1204,98 @@ U.ui = (function () {
             createSingleNode(x, (y - 1)); // South
             createSingleNode((x - 1), y); // West
 
+            return selectedNode;
+
+        },
+
+        /**
+         * Removes the node and amends the remaining nodes by removing any
+         * floating Single nodes. Can only be called on Engaged nodes.
+         *
+         * @method deleteNode
+         *
+         * @param {integer} x The x coordinate of the node to be removed.
+         * @param {integer} y The y coordinate of the node to be removed.
+         */
+        deleteNode = function deleteNode(x, y) {
+
+            var test = [], // list of Single nodes that will be removed if no adjacent Engaged node is found
+                l = node.length,
+                deletedNode = grid[x][y],
+                i;
+
+            c.remove(deletedNode.shape);
+
+            node[l - 1].id = deletedNode.id;
+            node[deletedNode.id] = node[l - 1];
+            node.pop();
+
+            grid[x][y] = undefined;
+
+            createSingleNode(x, y);
+
+            if (l !== 5) { // don't ever let the last Single node be removed
+                test.push(grid[x][y]); // test the Single node placed in stead of the removed Engaged node
+            }
+
+            if (grid[x][y + 1].type === "single") { // North
+                test.push(grid[x][y + 1]);
+            }
+
+            if (grid[x + 1][y].type === "single") { // East
+                test.push(grid[x + 1][y]);
+            }
+
+            if (grid[x][y - 1].type === "single") { // South
+                test.push(grid[x][y - 1]);
+            }
+
+            if (grid[x - 1][y].type === "single") { // West
+                test.push(grid[x - 1][y]);
+            }
+
+            for (i = test.length; i--;) {
+                deletedNode = test[i];
+                x = deletedNode.x;
+                y = deletedNode.y;
+
+                if (grid[x][y + 1]) {
+                    if (grid[x][y + 1].type === "engaged") { // North
+                        continue;
+                    }
+                }
+
+                if (grid[x + 1] && grid[x + 1][y]) { // throws error when x is beyond bound.east if grid[x + 1] isn't tested
+                    if (grid[x + 1][y].type === "engaged") { // East
+                        continue;
+                    }
+                }
+
+                if (grid[x][y - 1]) {
+                    if (grid[x][y - 1].type === "engaged") { // South
+                        continue;
+                    }
+                }
+
+                if (grid[x - 1] && grid[x - 1][y]) { // throws error when x is beyond bound.west if grid[x - 1] isn't tested
+                    if (grid[x - 1][y].type === "engaged") { // West
+                        continue;
+                    }
+                }
+
+                c.remove(deletedNode.shape);
+
+                l = node.length;
+
+                node[l - 1].id = deletedNode.id;
+                node[deletedNode.id] = node[l - 1];
+                node.pop();
+
+                grid[x][y] = undefined;
+            }
+
+            adjustBound();
+
         };
 
     // End var
@@ -1132,59 +1304,139 @@ U.ui = (function () {
     // Initialisation procedures
     resizeCanvas();
 
-    setTimeout((function () {
+    // Initialisation proceedures
+    setTimeout(function () {
         createSingleNode(0, 0); // start program
-    }), 300);
+    }, 300);
 
-    flowchartShapes.basic = new Shapes("Basic");
-    // Generic processing step: rectangle
-    flowchartShapes.basic.add(
+    // Configure UI elements
+    state.add("menu", {
+        DOM: $("#menu"),
+        change: $("#change_shape"),
+        del: $("#delete"),
+        node: {},
+        activate: function activate(options) {
+
+            var node = options.node,
+                nodeLocation = $(node.shape.node).offset();
+
+            this.node = node;
+
+            this.DOM.css("left", nodeLocation.left + node.shape.width / 2 + 2 -
+                    180 / 2 + "px");
+            this.DOM.css("top", nodeLocation.top + node.shape.height / 2 + 2 -
+                    180 / 2 + "px");
+
+            c.adjust(node.shape, { // repeat this inside Shapes.eventHandler = ... below
+                "stroke-width": 5
+            });
+
+            this.DOM.css("display", "block");
+
+            this.change.unbind();
+            this.change.click(function (e) {
+
+                e.preventDefault();
+
+                state.activate("shapes", {
+                    master: "menu",
+                    node: node
+                });
+
+                Shapes.eventHandler = function (pathData) {
+
+                    var x = node.x,
+                        y = node.y;
+
+                    createEngagedNode(x, y, pathData);
+
+                    c.adjust(grid[x][y].shape, { // repeat this in c.adjust(...) above
+                        "stroke-width": 5,
+                        cursor: "move"
+                    });
+
+                };
+
+            });
+
+            this.del.unbind();
+            this.del.click(function (e) {
+
+                e.preventDefault();
+                
+                state.deactivate();
+
+                deleteNode(node.x, node.y);
+
+            });
+
+        },
+        deactivate: function deactivate() {
+
+            c.adjust(this.node.shape, {
+                "stroke-width": 2,
+                cursor: "pointer"
+            });
+
+            this.DOM.css("display", "none");
+
+        }
+    });
+
+}());
+
+
+// Adds flowcharting shapes
+(function () {
+
+    // Dependencies
+    var Shapes = U.Shapes,
+
+
+    // Shape categories
+        basic = new Shapes("Basic");
+
+
+    // Basic shapes
+    basic.add( // generic processing step: rectangle
         "M 0 6.5 h 34 v 21 h -34 Z",
         "M 0 17 h 89 v 55 h -89 Z"
     );
-    // Input/Output: parallelogram
-    flowchartShapes.basic.add(
+    basic.add( // input/output: parallelogram
         "M 2.5 6.5 h 34 l -5 21 h -34 Z",
         "M 6.5 17 h 89 l -13 55 h -89 Z"
     );
-    // Prepare conditional: hexagon
-    flowchartShapes.basic.add(
+    basic.add( // prepare conditional: hexagon
         "M 2.5 6.5 h 29 l 5 10.5 l -5 10.5 h -29 l -5 -10.5 Z",
         "M 6.5 17 h 76 l 13 27.5 l -13 27.5 h -76 l -13 -27.5 Z"
     );
-    // Conditional: rhombus
-    flowchartShapes.basic.add(
+    basic.add( // conditional: rhombus
         "M 0 17 l 17 -17 l 17 17 l -17 17 Z",
         "M 0 44.5 l 44.5 -44.5 l 44.5 44.5 l -44.5 44.5 Z"
     );
-    // Start/End: circle
     // To find the distance l of the control point from the start/end point:
     //  l = r x 4(root(2) - 1) / 3
     // where r is the radius.
     // When r = 32 / 2 = 17, l = 9.3888 ~= 9.4
     // When r = 89 / 2 = 44.5, l = 24.57667 ~= 24.6
     // Note: One point will be (r / 2) - l to relatively position control points correctly
-    flowchartShapes.basic.add(
+    basic.add( // start/end: circle
         "M 0 17 c 0 -9.4 9.6 -17 17 -17 c 9.4 0 17 9.6 17 17 c 0 9.4 -9.6 17 -17 17 c -9.4 0 -17 -9.6 -17 -17",
         "M 0 44.5 c 0 -24.6 19.9 -44.5 44.5 -44.5 c 24.6 0 44.5 19.9 44.5 44.5 c 0 24.6 -19.9 44.5 -44.5 44.5 c -24.6 0 -44.5 -19.9 -44.5 -44.5"
     );
-    // Manual input: quadrilateral with top sloping up from left to right
-    flowchartShapes.basic.add(
+    basic.add( // manual input: quadrilateral with top sloping up from left to right
         "M 0 11.5 l 34 -5 v 21 h -34 Z",
         "M 0 30 l 89 -13 v 55 h -89 Z"
     );
-    // Manual operation: Trapezoid with longer side top
-    flowchartShapes.basic.add(
+    basic.add( // manual operation: Trapezoid with longer side top
         "M -2.5 6.5 h 39 l -5 21 h -29 Z",
         "M -6.5 17 h 102 l -13 55 h -76 Z"
     );
-    // Data file: cylinder
-    flowchartShapes.basic.add(
+    basic.add( // data file: cylinder
         "M 6.5 0 v 34 q 10.5 5 21 0 v -34 q -10.5 -5 -21 0 q 10.5 4 21 0",
         "M 17 0 v 89 q 27.5 13 55 0 v -89 q -27.5 -13 -56 1 m 1 -1 q 27.5 13 55 0"
     );
-    // Document: rectangle with wavy base
-    flowchartShapes.basic.add(
+    basic.add( // document: rectangle with wavy base
         "M 0 6.5 h 34 v 19 c -17 0 -17 8 -34 2 Z",
         "M 0 17 h 89 v 52 c -44.5 0 -44.5 13 -89 3 Z"
     );
